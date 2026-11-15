@@ -1,0 +1,244 @@
+:root {
+    --primary: #274335;
+    --primary-dark: #1c4a33;
+    --background: #caf0d3;
+    --text: #25352c;
+    --border: #d6e2d9;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, "Noto Sans Ethiopic", sans-serif;
+    background: var(--background);
+    color: var(--text);
+    line-height: 1.6;
+}
+
+header {
+    background: #174e36;
+    color: white;
+    text-align: center;
+    padding: 35px 20px;
+}
+
+header h1 {
+    font-size: 38px;
+    margin: 0;
+}
+
+header p {
+    margin: 8px 0;
+}
+
+header h2 {
+    margin: 5px 0;
+}
+
+.container {
+    max-width: 900px;
+    margin: 30px auto;
+    padding: 0 20px;
+}
+
+.privacy {
+    background: #e0f2e5;
+    border: 1px solid #b7d9c0;
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.panel {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 25px;
+    margin-bottom: 25px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.04);
+}
+
+.panel h2 {
+    margin-top: 0;
+    color: var(--primary-dark);
+}
+
+.upload-box {
+    border: 2px dashed var(--primary);
+    border-radius: 10px;
+    background: #f8fcf9;
+    padding: 30px 15px;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.upload-box.dragover {
+    background: #d9f0e1;
+    border-color: var(--primary-dark);
+}
+
+.upload-label,
+button {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 7px;
+    padding: 12px 20px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+button:hover,
+.upload-label:hover {
+    background: var(--primary-dark);
+}
+
+button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+button.secondary {
+    color: var(--primary-dark);
+    background: #e7f0e9;
+}
+
+button.secondary:hover {
+    background: #d5e5d9;
+}
+
+.button-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 20px 0;
+}
+
+#pageList {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.page-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid var(--border);
+    background: #fafcfa;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.page-item img {
+    width: 60px;
+    height: 75px;
+    object-fit: contain;
+    background: #e8ece9;
+    border-radius: 5px;
+}
+
+.page-name {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 14px;
+}
+
+.page-controls {
+    display: flex;
+    gap: 5px;
+}
+
+.page-controls button {
+    padding: 8px 12px;
+}
+
+.page-controls .remove {
+    background: #b83a3a;
+}
+
+progress {
+    width: 100%;
+    height: 20px;
+    accent-color: var(--primary);
+}
+
+#status {
+    font-size: 14px;
+    color: #52655a;
+}
+
+textarea {
+    width: 100%;
+    min-height: 350px;
+    resize: vertical;
+    padding: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: "Noto Sans Ethiopic",
+                 Nyala,
+                 "Abyssinica SIL",
+                 sans-serif;
+    font-size: 19px;
+    line-height: 1.8;
+}
+
+textarea:focus {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.instructions li {
+    margin-bottom: 8px;
+}
+
+footer {
+    text-align: center;
+    padding: 25px 15px;
+    background: #174e36;
+    color: white;
+    font-size: 14px;
+}
+
+footer p {
+    margin: 5px 0;
+}
+
+@media (max-width: 600px) {
+
+    header h1 {
+        font-size: 30px;
+    }
+
+    .container {
+        padding: 0 12px;
+    }
+
+    .panel {
+        padding: 15px;
+    }
+
+    .page-item {
+        flex-wrap: wrap;
+    }
+
+    .page-controls {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .button-group button {
+        flex: 1;
+    }
+
+    textarea {
+        font-size: 17px;
+    }
+}
