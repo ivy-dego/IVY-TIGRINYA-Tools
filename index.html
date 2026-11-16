@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,26 +7,39 @@
     <meta name="viewport"
           content="width=device-width, initial-scale=1.0">
 
-    <meta name="description"
-          content="Free Tigrinya image to text converter.">
-
     <title>Ivy Tools | Tigrinya OCR</title>
+
+    <!-- Cropper.js stylesheet -->
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
 
     <link rel="stylesheet" href="style.css">
 
-    <!-- Tesseract OCR library -->
+    <!-- Tesseract OCR -->
     <script defer
         src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js">
     </script>
 
+    <!-- PDF.js -->
+    <script defer
+        src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js">
+    </script>
+
+    <!-- Cropper.js -->
+    <script defer
+        src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js">
+    </script>
+
+    <!-- Application -->
     <script defer src="script.js"></script>
+
 </head>
 
 <body>
 
     <header>
         <h1>🌿 Ivy Tools</h1>
-        <p>Free Tigrinya Image to Text Converter</p>
+        <p>Tigrinya Image & PDF to Text Converter</p>
         <h2 lang="ti">ትግርኛ</h2>
     </header>
 
@@ -35,70 +49,158 @@
             🔒 Files are processed locally in your browser.
         </div>
 
+        <!-- Upload section -->
+
         <section class="panel">
 
-            <h2>1. Upload your images</h2>
-
-            <p>Select one or multiple JPG or PNG images.</p>
+            <h2>1. Upload your documents</h2>
 
             <div id="dropZone" class="upload-box">
 
-                <label for="imageInput" class="upload-label">
-                    Choose Images
+                <label for="fileInput" class="upload-label">
+                    Choose Images or PDF
                 </label>
 
-                <input
-                    type="file"
-                    id="imageInput"
-                    accept="image/jpeg,image/png"
-                    multiple
-                    hidden
-                >
+                <input type="file"
+                       id="fileInput"
+                       accept=".jpg,.jpeg,.png,.pdf"
+                       multiple
+                       hidden>
 
-                <p>Or drag and drop your images here</p>
+                <p>Drag and drop your files here</p>
+
+                <small>Supported formats: JPG, PNG and PDF</small>
 
             </div>
 
             <h3>Arrange your pages</h3>
 
-            <p>Use the up and down buttons to change page order.</p>
+            <p>
+                Select a page to edit it.
+                Use the arrows to change the page order.
+            </p>
 
             <div id="pageList"></div>
 
+            <button id="clearBtn" class="danger">
+                Clear All
+            </button>
+
+        </section>
+
+
+        <!-- Image editor -->
+
+        <section class="panel" id="editorPanel" hidden>
+
+            <h2>2. Prepare your image</h2>
+
+            <p id="selectedPage"></p>
+
+            <div class="preview-area">
+                <canvas id="previewCanvas"></canvas>
+            </div>
+
             <div class="button-group">
 
-                <button id="convertBtn" disabled>
-                    Convert to Text
+                <button id="rotateLeft">
+                    ↶ Rotate Left 90°
                 </button>
 
-                <button id="clearBtn" class="secondary" disabled>
-                    Clear All
+                <button id="rotateRight">
+                    ↷ Rotate Right 90°
+                </button>
+
+                <button id="cropBtn">
+                    Crop Image
+                </button>
+
+                <button id="resetBtn" class="secondary">
+                    Reset Image
                 </button>
 
             </div>
 
-            <progress
-                id="progressBar"
-                value="0"
-                max="100">
+            <div class="adjustment">
+
+                <label for="contrast">
+                    Contrast:
+                    <span id="contrastValue">100%</span>
+                </label>
+
+                <input type="range"
+                       id="contrast"
+                       min="50"
+                       max="250"
+                       step="5"
+                       value="100">
+
+            </div>
+
+            <div class="adjustment">
+
+                <label for="brightness">
+                    Brightness:
+                    <span id="brightnessValue">100%</span>
+                </label>
+
+                <input type="range"
+                       id="brightness"
+                       min="50"
+                       max="180"
+                       step="5"
+                       value="100">
+
+            </div>
+
+        </section>
+
+
+        <!-- Conversion section -->
+
+        <section class="panel">
+
+            <h2>3. Convert to text</h2>
+
+            <label for="language">OCR Language</label>
+
+            <select id="language">
+
+                <option value="tir">Tigrinya — ትግርኛ</option>
+
+                <option value="tir+eng">
+                    Tigrinya + English
+                </option>
+
+            </select>
+
+            <button id="convertBtn" class="primary-wide">
+                Convert All Pages to Text
+            </button>
+
+            <progress id="progressBar"
+                      value="0"
+                      max="100">
             </progress>
 
             <p id="status" role="status" aria-live="polite">
-                Waiting for images...
+                Waiting for documents...
             </p>
 
         </section>
 
+
+        <!-- Extracted text section -->
+
         <section class="panel">
 
-            <h2>2. Extracted Text</h2>
+            <h2>4. Extracted text</h2>
 
-            <p>You can edit, correct, copy or download the text.</p>
+            <p>Review and correct your text before exporting.</p>
 
-            <textarea
-                id="output"
-                lang="ti"
-                placeholder="Your Tigrinya text will appear here...">
+            <textarea id="output"
+                      lang="ti"
+                      placeholder="Extracted text will appear here...">
             </textarea>
 
             <div class="button-group">
@@ -107,39 +209,77 @@
                     Copy Text
                 </button>
 
-                <button id="downloadBtn" class="secondary">
+                <button id="downloadBtn">
                     Download TXT
+                </button>
+
+                <button id="shareBtn">
+                    Share Text
                 </button>
 
             </div>
 
+            <p id="outputStatus" role="status" aria-live="polite"></p>
+
         </section>
 
-        <section class="panel instructions">
+
+        <!-- Instructions -->
+
+        <section class="panel">
 
             <h2>How to use Ivy Tools</h2>
 
             <ol>
-                <li>Select your JPG or PNG images.</li>
-                <li>Arrange the pages in the correct order.</li>
-                <li>Click Convert to Text.</li>
-                <li>Review and correct the extracted text.</li>
-                <li>Copy or download your text.</li>
+                <li>Upload images or PDF documents.</li>
+                <li>Arrange your pages in the correct order.</li>
+                <li>Select pages to rotate, crop or adjust them.</li>
+                <li>Convert all pages to text.</li>
+                <li>Review, copy, download or share your text.</li>
             </ol>
 
             <p>
-                An internet connection is initially required
-                to load the OCR engine and language model.
-                Your images are processed in your browser.
+                Internet access is required to load the OCR
+                libraries and language model initially.
+                Your documents are processed inside your browser.
             </p>
 
         </section>
 
     </main>
 
+
+    <!-- Crop dialog -->
+
+    <dialog id="cropDialog">
+
+        <h2>Crop your image</h2>
+
+        <p>Drag the corners to select the area you want to keep.</p>
+
+        <div class="crop-area">
+            <img id="cropImage" alt="Image to crop">
+        </div>
+
+        <div class="button-group">
+
+            <button id="applyCrop">
+                Apply Crop
+            </button>
+
+            <button id="cancelCrop" class="secondary">
+                Cancel
+            </button>
+
+        </div>
+
+    </dialog>
+
+
     <footer>
-        <p>Ivy Tools | Version 1.0</p>
+        <p>🌿 Ivy Tools — Version 1.1</p>
         <p>Free Browser-Based Tigrinya OCR</p>
+        <small>Files are processed locally in your browser.</small>
     </footer>
 
 </body>

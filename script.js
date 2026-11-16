@@ -1,82 +1,503 @@
-// ========================================
-// Ivy Tools - Version 1.0
-// Tigrinya Image to Text Converter
-// ========================================
+
+// ============================================
+// Ivy Tools - Version 1.1
+// Tigrinya Image and PDF OCR
+// ============================================
 
 
-// 1. Get HTML elements
+// 1. HTML ELEMENTS
 
-const imageInput = document.getElementById("imageInput");
-const pageList = document.getElementById("pageList");
-const convertBtn = document.getElementById("convertBtn");
-const clearBtn = document.getElementById("clearBtn");
-const copyBtn = document.getElementById("copyBtn");
-const downloadBtn = document.getElementById("downloadBtn");
-const output = document.getElementById("output");
-const progressBar = document.getElementById("progressBar");
-const statusText = document.getElementById("status");
-const dropZone = document.getElementById("dropZone");
+const $ = id => document.getElementById(id);
+
+const fileInput = $("fileInput");
+const pageList = $("pageList");
+const dropZone = $("dropZone");
+
+const editorPanel = $("editorPanel");
+const previewCanvas = $("previewCanvas");
+
+const contrast = $("contrast");
+const brightness = $("brightness");
+
+const output = $("output");
+const statusText = $("status");
+const progressBar = $("progressBar");
+
+const cropDialog = $("cropDialog");
+const cropImage = $("cropImage");
 
 
-// 2. Store uploaded images
+// 2. APPLICATION STATE
 
 let pages = [];
-let processing = false;
+let selectedIndex = -1;
+
+let busy = false;
+let cropper = null;
+let cropPage = null;
+
+const MAX_PIXELS = 12000000;
+const MAX_PAGES = 50;
 
 
-// 3. Add images to the page list
+// 3. PDF WORKER CONFIGURATION
 
-function addFiles(files) {
+if (window.pdfjsLib) {
 
-    if (processing) return;
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-    let added = 0;
-
-    for (const file of files) {
-
-        const validType =
-            file.type === "image/jpeg" ||
-            file.type === "image/png";
-
-        if (!validType) {
-            continue;
-        }
-
-        pages.push({
-            file: file,
-            url: URL.createObjectURL(file)
-        });
-
-        added++;
-    }
-
-    if (!added) {
-        statusText.textContent =
-            "Please choose valid JPG or PNG images.";
-        return;
-    }
-
-    progressBar.value = 0;
-
-    statusText.textContent =
-        `${pages.length} page(s) ready. Previous text is unchanged.`;
-
-    renderPages();
 }
 
 
-// 4. Handle file selection
+// 4. CANVAS HELPERS
 
-imageInput.addEventListener("change", function () {
+function createCanvas(width, height) {
 
-    addFiles(imageInput.files);
+    const canvas = document.createElement("canvas");
 
-    // Allow the same file to be selected again
-    imageInput.value = "";
+    canvas.width = width;
+    canvas.height = height;
+
+    return canvas;
+}
+
+
+function copyCanvas(source) {
+
+    const canvas = createCanvas(
+        source.width,
+        source.height
+    );
+
+    canvas.getContext("2d").drawImage(source, 0, 0);
+
+    return canvas;
+}
+
+
+function canvasToBlob(canvas) {
+
+    return new Promise((resolve, reject) => {
+
+        canvas.toBlob(blob => {
+
+            if (blob) {
+                resolve(blob);
+            } else {
+                reject(new Error("Could not create image."));
+            }
+
+        }, "image/png");
+
+    });
+}
+
+
+// 5. CREATE A PAGE OBJECT
+
+function createPage(name, canvas) {
+
+    return {
+
+        name: name,
+
+        original: canvas,
+        base: canvas,
+
+        rotation: 0,
+        contrast: 100,
+        brightness: 100
+
+    };
+}
+
+
+// 6. LOAD JPG OR PNG IMAGE
+
+async function loadImage(file) {
+
+    const url = URL.createObjectURL(file);
+
+    try {
+
+        const image = new Image();
+
+        image.src = url;
+
+        await image.decode();
+
+        const scale = Math.min(
+            1,
+            Math.sqrt(
+                MAX_PIXELS /
+                (image.naturalWidth * image.naturalHeight)
+            )
+        );
+
+        const canvas = createCanvas(
+            Math.max(1, Math.round(image.naturalWidth * scale)),
+            Math.max(1, Math.round(image.naturalHeight * scale))
+        );
+
+        const ctx = canvas.getContext("2d");
+
+        ctx.fillStyle = "white";
+
+        ctx.fillRect(
+            0, 0, canvas.width, canvas.height
+        );
+
+        ctx.drawImage(
+            image,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        return createPage(file.name, canvas);
+
+    } finally {
+
+        URL.revokeObjectURL(url);
+
+    }
+}
+
+
+// 7. LOAD PDF DOCUMENT
+
+async function loadPDF(file) {
+
+    if (!window.pdfjsLib) {
+
+        throw new Error("PDF library could not load.");
+
+    }
+
+    const data = await file.arrayBuffer();
+
+    const task = pdfjsLib.getDocument({
+
+        data: data,
+
+        // Disable dynamic JavaScript evaluation
+        isEvalSupported: false
+
+    });
+
+    try {
+
+        const pdf = await task.promise;
+
+        if (pdf.numPages + pages.length > MAX_PAGES) {
+
+            throw new Error(
+                `Maximum ${MAX_PAGES} pages per session.`
+            );
+
+        }
+
+        for (let n = 1; n <= pdf.numPages; n++) {
+
+            statusText.textContent =
+                `Reading PDF page ${n} of ${pdf.numPages}...`;
+
+            const pdfPage = await pdf.getPage(n);
+
+            try {
+
+                const naturalViewport =
+                    pdfPage.getViewport({ scale: 1 });
+
+                const scale = Math.min(
+
+                    2.5,
+
+                    Math.sqrt(
+                        MAX_PIXELS /
+                        (
+                            naturalViewport.width *
+                            naturalViewport.height
+                        )
+                    )
+                );
+
+                const viewport =
+                    pdfPage.getViewport({ scale: scale });
+
+                const canvas = createCanvas(
+                    Math.ceil(viewport.width),
+                    Math.ceil(viewport.height)
+                );
+
+                const ctx = canvas.getContext("2d");
+
+                await pdfPage.render({
+
+                    canvasContext: ctx,
+                    viewport: viewport,
+                    background: "rgb(255,255,255)"
+
+                }).promise;
+
+                pages.push(
+
+                    createPage(
+                        `${file.name} — Page ${n}`,
+                        canvas
+                    )
+
+                );
+
+            } finally {
+
+                pdfPage.cleanup();
+
+            }
+        }
+
+    } finally {
+
+        await task.destroy();
+
+    }
+}
+
+
+// 8. IMPORT MULTIPLE FILES
+
+async function addFiles(files) {
+
+    if (busy || cropDialog.open) return;
+
+    busy = true;
+
+    updateControls();
+
+    const errors = [];
+
+    try {
+
+        for (const file of files) {
+
+            try {
+
+                if (pages.length >= MAX_PAGES) {
+
+                    throw new Error(
+                        `Maximum ${MAX_PAGES} pages reached.`
+                    );
+
+                }
+
+                statusText.textContent =
+                    `Loading ${file.name}...`;
+
+                const name = file.name.toLowerCase();
+
+                if (name.endsWith(".pdf")) {
+
+                    await loadPDF(file);
+
+                } else if (/\.(jpg|jpeg|png)$/.test(name)) {
+
+                    const page = await loadImage(file);
+
+                    pages.push(page);
+
+                } else {
+
+                    throw new Error("Unsupported file format.");
+
+                }
+
+            } catch (error) {
+
+                console.error(error);
+
+                errors.push(
+                    `${file.name}: ${error.message}`
+                );
+
+            }
+        }
+
+    } finally {
+
+        busy = false;
+
+        if (pages.length && selectedIndex === -1) {
+
+            selectedIndex = 0;
+
+        }
+
+        progressBar.value = 0;
+
+        renderPages();
+        updatePreview();
+
+        statusText.textContent =
+            `${pages.length} page(s) ready. ` +
+            "Convert again to update extracted text." +
+            (errors.length ? " " + errors.join(" | ") : "");
+
+    }
+}
+
+
+fileInput.addEventListener("change", () => {
+
+    const files = Array.from(fileInput.files);
+
+    fileInput.value = "";
+
+    addFiles(files);
+
 });
 
 
-// 5. Display uploaded images
+// 9. DRAG AND DROP
+
+dropZone.addEventListener("dragover", event => {
+
+    event.preventDefault();
+
+    if (!busy) {
+
+        dropZone.classList.add("dragover");
+
+    }
+});
+
+
+dropZone.addEventListener("dragleave", () => {
+
+    dropZone.classList.remove("dragover");
+
+});
+
+
+dropZone.addEventListener("drop", event => {
+
+    event.preventDefault();
+
+    dropZone.classList.remove("dragover");
+
+    addFiles(Array.from(event.dataTransfer.files));
+
+});
+
+
+// 10. DRAW IMAGE WITH ROTATION
+//     CONTRAST AND BRIGHTNESS
+
+function renderImage(page, target, maxDimension = Infinity) {
+
+    const source = page.base;
+
+    const rotated = page.rotation % 180 !== 0;
+
+    const width = rotated
+        ? source.height
+        : source.width;
+
+    const height = rotated
+        ? source.width
+        : source.height;
+
+    const scale = Math.min(
+        1,
+        maxDimension / Math.max(width, height)
+    );
+
+    target.width = Math.max(
+        1, Math.round(width * scale)
+    );
+
+    target.height = Math.max(
+        1, Math.round(height * scale)
+    );
+
+    const ctx = target.getContext("2d");
+
+    ctx.fillStyle = "white";
+
+    ctx.fillRect(
+        0, 0, target.width, target.height
+    );
+
+    ctx.save();
+
+    ctx.translate(
+        target.width / 2,
+        target.height / 2
+    );
+
+    ctx.rotate(page.rotation * Math.PI / 180);
+
+    ctx.scale(scale, scale);
+
+    ctx.drawImage(
+        source,
+        -source.width / 2,
+        -source.height / 2
+    );
+
+    ctx.restore();
+
+
+    // Apply brightness and contrast directly
+    // to pixel values for browser compatibility.
+
+    if (
+        page.contrast !== 100 ||
+        page.brightness !== 100
+    ) {
+
+        const imageData = ctx.getImageData(
+            0, 0, target.width, target.height
+        );
+
+        const pixels = imageData.data;
+
+        const c = page.contrast / 100;
+        const b = page.brightness / 100;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+
+            for (let channel = 0; channel < 3; channel++) {
+
+                const value = pixels[i + channel];
+
+                pixels[i + channel] =
+                    ((value * b) - 128) * c + 128;
+
+            }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+
+    }
+
+    return target;
+}
+
+
+// 11. CREATE EDITED IMAGE FOR OCR
+
+function getProcessedImage(page) {
+
+    return renderImage(
+        page,
+        createCanvas(1, 1)
+    );
+}
+
+
+// 12. DISPLAY PAGE LIST
 
 function renderPages() {
 
@@ -85,260 +506,617 @@ function renderPages() {
     pages.forEach((page, index) => {
 
         const row = document.createElement("div");
+
         row.className = "page-item";
 
+        if (index === selectedIndex) {
+
+            row.classList.add("active");
+
+        }
+
+        // Generate a small thumbnail
+
+        const thumb = renderImage(
+            page,
+            createCanvas(1, 1),
+            120
+        );
+
         const image = document.createElement("img");
-        image.src = page.url;
+
+        image.src = thumb.toDataURL("image/png");
         image.alt = `Page ${index + 1}`;
 
-        const name = document.createElement("span");
+        const name = document.createElement("div");
+
         name.className = "page-name";
 
         name.textContent =
-            `${index + 1}. ${page.file.name}`;
+            `${index + 1}. ${page.name}`;
 
         const controls = document.createElement("div");
+
         controls.className = "page-controls";
 
 
-        // Move up button
+        function button(label, title, action, disabled) {
 
-        const upBtn = document.createElement("button");
+            const btn = document.createElement("button");
 
-        upBtn.textContent = "↑";
-        upBtn.title = "Move page up";
+            btn.textContent = label;
+            btn.title = title;
 
-        upBtn.setAttribute(
-            "aria-label",
-            `Move page ${index + 1} up`
+            btn.setAttribute("aria-label", title);
+
+            btn.disabled = busy || disabled;
+
+            btn.addEventListener("click", action);
+
+            return btn;
+        }
+
+
+        const edit = button(
+
+            "Edit",
+            `Edit page ${index + 1}`,
+
+            () => {
+
+                if (busy) return;
+
+                selectedIndex = index;
+
+                renderPages();
+                updatePreview();
+
+            },
+
+            false
+
         );
 
-        upBtn.disabled = processing || index === 0;
 
-        upBtn.addEventListener("click", function () {
-            movePage(index, -1);
-        });
+        const up = button(
 
+            "↑",
+            `Move page ${index + 1} up`,
 
-        // Move down button
+            () => movePage(index, -1),
 
-        const downBtn = document.createElement("button");
+            index === 0
 
-        downBtn.textContent = "↓";
-        downBtn.title = "Move page down";
-
-        downBtn.setAttribute(
-            "aria-label",
-            `Move page ${index + 1} down`
         );
 
-        downBtn.disabled =
-            processing || index === pages.length - 1;
 
-        downBtn.addEventListener("click", function () {
-            movePage(index, 1);
-        });
+        const down = button(
 
+            "↓",
+            `Move page ${index + 1} down`,
 
-        // Remove button
+            () => movePage(index, 1),
 
-        const removeBtn = document.createElement("button");
+            index === pages.length - 1
 
-        removeBtn.textContent = "✕";
-        removeBtn.className = "remove";
-        removeBtn.title = "Remove page";
-        removeBtn.disabled = processing;
-
-        removeBtn.setAttribute(
-            "aria-label",
-            `Remove page ${index + 1}`
         );
 
-        removeBtn.addEventListener("click", function () {
-            removePage(index);
-        });
 
+        const remove = button(
 
-        controls.append(upBtn, downBtn, removeBtn);
+            "✕",
+            `Remove page ${index + 1}`,
 
-        row.append(image, name, controls);
+            () => removePage(index),
+
+            false
+
+        );
+
+        remove.className = "danger";
+
+        controls.append(
+            edit, up, down, remove
+        );
+
+        row.append(
+            image, name, controls
+        );
 
         pageList.appendChild(row);
+
     });
 
-    convertBtn.disabled = processing || pages.length === 0;
-    clearBtn.disabled = processing ||
-        (pages.length === 0 && !output.value);
+    updateControls();
 }
 
 
-// 6. Move pages up or down
+// 13. MOVE PAGES UP OR DOWN
 
 function movePage(index, direction) {
 
-    if (processing) return;
+    if (busy) return;
 
     const newIndex = index + direction;
 
-    if (newIndex < 0 || newIndex >= pages.length) {
-        return;
-    }
+    if (
+        newIndex < 0 ||
+        newIndex >= pages.length
+    ) return;
 
-    // Swap the position of two pages
+    const selected = pages[selectedIndex];
 
     [pages[index], pages[newIndex]] =
         [pages[newIndex], pages[index]];
 
-    statusText.textContent =
-        "Page order changed. Convert again to update text.";
+    selectedIndex = pages.indexOf(selected);
 
-    progressBar.value = 0;
+    markChanged();
 
     renderPages();
+    updatePreview();
+
 }
 
 
-// 7. Remove individual pages
+// 14. REMOVE PAGE
 
 function removePage(index) {
 
-    if (processing) return;
+    if (busy) return;
 
-    URL.revokeObjectURL(pages[index].url);
+    const selected = pages[selectedIndex];
 
     pages.splice(index, 1);
+
+    selectedIndex = pages.indexOf(selected);
+
+    if (selectedIndex === -1 && pages.length) {
+
+        selectedIndex = Math.min(
+            index, pages.length - 1
+        );
+
+    }
+
+    markChanged();
+
+    renderPages();
+    updatePreview();
+
+}
+
+
+// 15. UPDATE IMAGE PREVIEW
+
+function updatePreview() {
+
+    const page = pages[selectedIndex];
+
+    editorPanel.hidden = !page;
+
+    if (!page) {
+
+        previewCanvas.width = 1;
+        previewCanvas.height = 1;
+
+        return;
+
+    }
+
+    $("selectedPage").textContent =
+        `Editing page ${selectedIndex + 1}: ${page.name}`;
+
+    contrast.value = page.contrast;
+    brightness.value = page.brightness;
+
+    $("contrastValue").textContent =
+        `${page.contrast}%`;
+
+    $("brightnessValue").textContent =
+        `${page.brightness}%`;
+
+    renderImage(page, previewCanvas, 1200);
+
+}
+
+
+// 16. MARK EDITED DOCUMENT
+
+function markChanged() {
 
     progressBar.value = 0;
 
     statusText.textContent =
-        `${pages.length} page(s) remaining.`;
+        "Pages changed. Convert again to update the text.";
 
-    renderPages();
 }
 
 
-// 8. Clear all images and text
+// 17. ROTATION
 
-clearBtn.addEventListener("click", function () {
+function rotateImage(degrees) {
 
-    if (processing) return;
+    if (busy || !pages[selectedIndex]) return;
 
-    if (output.value.trim() &&
-        !window.confirm("Clear all images and extracted text?")) {
+    const page = pages[selectedIndex];
+
+    page.rotation =
+        (page.rotation + degrees + 360) % 360;
+
+    markChanged();
+
+    updatePreview();
+    renderPages();
+
+}
+
+
+$("rotateLeft").addEventListener(
+    "click",
+    () => rotateImage(-90)
+);
+
+
+$("rotateRight").addEventListener(
+    "click",
+    () => rotateImage(90)
+);
+
+
+// 18. CONTRAST AND BRIGHTNESS
+
+contrast.addEventListener("input", () => {
+
+    if (busy || !pages[selectedIndex]) return;
+
+    pages[selectedIndex].contrast =
+        Number(contrast.value);
+
+    markChanged();
+
+    updatePreview();
+
+});
+
+
+brightness.addEventListener("input", () => {
+
+    if (busy || !pages[selectedIndex]) return;
+
+    pages[selectedIndex].brightness =
+        Number(brightness.value);
+
+    markChanged();
+
+    updatePreview();
+
+});
+
+
+contrast.addEventListener("change", renderPages);
+brightness.addEventListener("change", renderPages);
+
+
+// 19. RESET IMAGE
+
+$("resetBtn").addEventListener("click", () => {
+
+    if (busy || !pages[selectedIndex]) return;
+
+    const page = pages[selectedIndex];
+
+    page.base = page.original;
+
+    page.rotation = 0;
+    page.contrast = 100;
+    page.brightness = 100;
+
+    markChanged();
+
+    updatePreview();
+    renderPages();
+
+});
+
+
+// 20. OPEN CROP EDITOR
+
+$("cropBtn").addEventListener("click", () => {
+
+    if (busy || !pages[selectedIndex]) return;
+
+    if (typeof Cropper === "undefined") {
+
+        statusText.textContent =
+            "Crop library could not load.";
+
         return;
+
     }
 
-    pages.forEach(page => {
-        URL.revokeObjectURL(page.url);
+    cropPage = pages[selectedIndex];
+
+    // Apply rotation before cropping,
+    // but keep brightness and contrast adjustable.
+
+    const cropSource = getProcessedImage({
+
+        ...cropPage,
+
+        contrast: 100,
+        brightness: 100
+
     });
+
+    cropImage.src =
+        cropSource.toDataURL("image/png");
+
+    cropDialog.showModal();
+
+    $("applyCrop").disabled = true;
+
+    try {
+
+        cropper = new Cropper(cropImage, {
+
+            viewMode: 1,
+
+            dragMode: "crop",
+
+            autoCropArea: 0.85,
+
+            responsive: true,
+
+            movable: true,
+
+            zoomable: true,
+
+            background: false,
+
+            ready() {
+
+                $("applyCrop").disabled = false;
+
+            }
+
+        });
+
+    } catch (error) {
+
+        cropDialog.close();
+
+        statusText.textContent =
+            `Could not open crop editor: ${error.message}`;
+
+    }
+
+});
+
+
+// 21. APPLY IMAGE CROP
+
+$("applyCrop").addEventListener("click", () => {
+
+    if (!cropper || !cropPage) return;
+
+    const croppedCanvas = cropper.getCroppedCanvas({
+
+        fillColor: "#ffffff",
+
+        maxWidth: 6000,
+        maxHeight: 6000,
+
+        imageSmoothingEnabled: true,
+        imageSmoothingQuality: "high"
+
+    });
+
+    if (
+        !croppedCanvas ||
+        !croppedCanvas.width ||
+        !croppedCanvas.height
+    ) return;
+
+    cropPage.base = croppedCanvas;
+
+    cropPage.rotation = 0;
+
+    cropDialog.close();
+
+    markChanged();
+
+    updatePreview();
+    renderPages();
+
+});
+
+
+$("cancelCrop").addEventListener("click", () => {
+
+    cropDialog.close();
+
+});
+
+
+cropDialog.addEventListener("close", () => {
+
+    if (cropper) {
+
+        cropper.destroy();
+
+        cropper = null;
+
+    }
+
+    cropPage = null;
+
+    cropImage.removeAttribute("src");
+
+});
+
+
+// 22. ENABLE OR DISABLE CONTROLS
+
+function updateControls() {
+
+    fileInput.disabled = busy;
+
+    document.querySelector(".upload-label")
+        .classList.toggle("disabled", busy);
+
+    $("convertBtn").disabled =
+        busy || pages.length === 0;
+
+    $("clearBtn").disabled =
+        busy || (pages.length === 0 && !output.value);
+
+    $("language").disabled = busy;
+
+    const editorDisabled =
+        busy || !pages[selectedIndex];
+
+    [
+
+        "rotateLeft",
+        "rotateRight",
+        "cropBtn",
+        "resetBtn",
+        "contrast",
+        "brightness"
+
+    ].forEach(id => {
+
+        $(id).disabled = editorDisabled;
+
+    });
+
+    output.readOnly = busy;
+
+    ["copyBtn", "downloadBtn", "shareBtn"]
+        .forEach(id => {
+
+            $(id).disabled =
+                busy || !output.value.trim();
+
+        });
+
+}
+
+
+// 23. CLEAR ALL DOCUMENTS
+
+$("clearBtn").addEventListener("click", () => {
+
+    if (busy) return;
+
+    if (
+        !confirm(
+            "Remove all pages and extracted text?"
+        )
+    ) return;
 
     pages = [];
 
+    selectedIndex = -1;
+
     output.value = "";
+
     progressBar.value = 0;
 
-    statusText.textContent = "Waiting for images...";
+    statusText.textContent =
+        "Waiting for documents...";
+
+    $("outputStatus").textContent = "";
 
     renderPages();
+    updatePreview();
+
 });
 
 
-// 9. Drag and drop functionality
+// 24. CONVERT ALL PAGES WITH OCR
 
-dropZone.addEventListener("dragover", function (event) {
+$("convertBtn").addEventListener("click", async () => {
 
-    event.preventDefault();
-
-    if (!processing) {
-        dropZone.classList.add("dragover");
-    }
-});
-
-dropZone.addEventListener("dragleave", function () {
-
-    dropZone.classList.remove("dragover");
-});
-
-dropZone.addEventListener("drop", function (event) {
-
-    event.preventDefault();
-
-    dropZone.classList.remove("dragover");
-
-    if (!processing) {
-        addFiles(event.dataTransfer.files);
-    }
-});
-
-
-// 10. Convert the images into Tigrinya text
-
-convertBtn.addEventListener("click", async function () {
-
-    if (pages.length === 0 || processing) return;
+    if (busy || pages.length === 0) return;
 
     if (typeof Tesseract === "undefined") {
 
         statusText.textContent =
-            "OCR library could not load. Check your internet connection.";
+            "OCR library could not load.";
 
         return;
+
     }
 
-    if (output.value.trim() &&
-        !window.confirm("Replace the existing extracted text?")) {
-        return;
-    }
+    if (
+        output.value.trim() &&
+        !confirm("Replace the existing text?")
+    ) return;
 
-    processing = true;
-
-    imageInput.disabled = true;
-    copyBtn.disabled = true;
-    downloadBtn.disabled = true;
-    output.readOnly = true;
+    busy = true;
 
     progressBar.value = 0;
 
-    let worker = null;
-    let currentPage = 0;
-
-    const results = [];
-    const totalPages = pages.length;
+    const previousText = output.value;
 
     output.value = "";
 
+    $("outputStatus").textContent = "";
+
     renderPages();
+
+    const results = [];
+
+    const total = pages.length;
+
+    let worker = null;
+
+    let currentPage = 0;
 
     try {
 
         statusText.textContent =
             "Loading Tigrinya OCR language model...";
 
-
-        // Create the Tigrinya OCR worker
-
         worker = await Tesseract.createWorker(
-            "tir",
+
+            $("language").value,
+
             1,
+
             {
-                logger: function (message) {
 
-                    if (message.status === "recognizing text") {
+                logger(message) {
 
-                        const fraction =
-                            Math.max(0, Math.min(1, message.progress || 0));
+                    if (
+                        message.status === "recognizing text"
+                    ) {
 
-                        const progress =
+                        const fraction = Math.max(
+
+                            0,
+
+                            Math.min(
+                                1,
+                                message.progress || 0
+                            )
+
+                        );
+
+                        const percent = Math.round(
+
                             ((currentPage + fraction)
-                            / totalPages) * 100;
+                            / total) * 100
 
-                        progressBar.value =
-                            Math.round(progress);
+                        );
+
+                        progressBar.value = percent;
 
                         statusText.textContent =
-                            `Processing page ${currentPage + 1} ` +
-                            `of ${totalPages} — ` +
-                            `${Math.round(progress)}%`;
+                            `Processing page ${currentPage + 1}` +
+                            ` of ${total} — ${percent}%`;
 
                     } else {
 
@@ -346,119 +1124,136 @@ convertBtn.addEventListener("click", async function () {
                             message.status || "Loading OCR...";
 
                     }
+
                 }
+
             }
+
         );
 
 
-        // Process each image in the selected order
-
-        for (let i = 0; i < totalPages; i++) {
+        for (let i = 0; i < total; i++) {
 
             currentPage = i;
 
             statusText.textContent =
-                `Processing page ${i + 1} of ${totalPages}...`;
+                `Preparing page ${i + 1} of ${total}...`;
 
-            const result = await worker.recognize(
-                pages[i].file
+            // OCR uses the edited canvas.
+
+            const canvas =
+                getProcessedImage(pages[i]);
+
+            const blob = await canvasToBlob(canvas);
+
+            // Release temporary canvas memory.
+
+            canvas.width = 1;
+            canvas.height = 1;
+
+            const result = await worker.recognize(blob);
+
+            results.push(
+                result.data.text.trim()
             );
 
-            results.push(result.data.text.trim());
+            output.value =
+                results.join("\n\n");
 
+            progressBar.value = Math.round(
+                ((i + 1) / total) * 100
+            );
 
-            // Combine the extracted text
-
-            output.value = results.join("\n\n");
-
-            progressBar.value =
-                Math.round(((i + 1) / totalPages) * 100);
         }
 
-
-        // Conversion finished
 
         progressBar.value = 100;
 
         statusText.textContent =
-            `Completed! ${totalPages} page(s) converted. ` +
-            "Please review the text for errors.";
+            `Completed! ${total} page(s) converted. ` +
+            "Please review the extracted text.";
 
     } catch (error) {
 
         console.error(error);
 
+        if (!results.length) {
+
+            output.value = previousText;
+
+        }
+
         statusText.textContent =
-            `Conversion failed after ${results.length} page(s). ` +
-            "Any completed text is preserved. " +
-            "Check your internet connection and images.";
+            `OCR failed after ${results.length} page(s): ` +
+            error.message;
 
     } finally {
 
         if (worker) {
 
             try {
+
                 await worker.terminate();
+
             } catch (error) {
+
                 console.error(error);
+
             }
+
         }
 
-        processing = false;
-
-        imageInput.disabled = false;
-        copyBtn.disabled = false;
-        downloadBtn.disabled = false;
-        output.readOnly = false;
+        busy = false;
 
         renderPages();
+
     }
+
 });
 
 
-// 11. Copy extracted text
+// 25. COPY TEXT
 
-copyBtn.addEventListener("click", async function () {
+async function copyText() {
 
-    if (!output.value.trim()) {
-
-        statusText.textContent = "There is no text to copy.";
-
-        return;
-    }
+    if (!output.value.trim()) return;
 
     try {
 
-        await navigator.clipboard.writeText(output.value);
+        await navigator.clipboard.writeText(
+            output.value
+        );
 
-        statusText.textContent = "Text copied successfully!";
+        $("outputStatus").textContent =
+            "Text copied successfully!";
 
     } catch (error) {
 
         output.focus();
         output.select();
 
-        statusText.textContent =
+        $("outputStatus").textContent =
             "Text selected. Press Ctrl+C or Cmd+C to copy.";
+
     }
-});
+}
 
 
-// 12. Download extracted text
+$("copyBtn").addEventListener("click", copyText);
 
-downloadBtn.addEventListener("click", function () {
 
-    if (!output.value.trim()) {
+// 26. DOWNLOAD TEXT FILE
 
-        statusText.textContent =
-            "There is no text to download.";
+$("downloadBtn").addEventListener("click", () => {
 
-        return;
-    }
+    if (!output.value.trim()) return;
 
     const blob = new Blob(
+
         [output.value],
+
         { type: "text/plain;charset=utf-8" }
+
     );
 
     const url = URL.createObjectURL(blob);
@@ -466,6 +1261,7 @@ downloadBtn.addEventListener("click", function () {
     const link = document.createElement("a");
 
     link.href = url;
+
     link.download = "ivy-tools-tigrinya.txt";
 
     document.body.appendChild(link);
@@ -475,18 +1271,80 @@ downloadBtn.addEventListener("click", function () {
     link.remove();
 
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    $("outputStatus").textContent =
+        "Text file download started.";
+
 });
 
 
-// 13. Update buttons when text is edited
+// 27. SHARE EXTRACTED TEXT
 
-output.addEventListener("input", function () {
+$("shareBtn").addEventListener("click", async () => {
 
-    clearBtn.disabled = processing ||
-        (pages.length === 0 && !output.value);
+    const text = output.value.trim();
+
+    if (!text) return;
+
+    const shareData = {
+
+        title: "Ivy Tools — Tigrinya OCR",
+
+        text: text
+
+    };
+
+    try {
+
+        if (
+
+            navigator.share &&
+
+            (
+                !navigator.canShare ||
+                navigator.canShare(shareData)
+            )
+
+        ) {
+
+            await navigator.share(shareData);
+
+            $("outputStatus").textContent =
+                "Text passed to sharing service.";
+
+        } else {
+
+            await copyText();
+
+            $("outputStatus").textContent +=
+                " Native sharing is unavailable. " +
+                "Paste the text into your preferred app.";
+
+        }
+
+    } catch (error) {
+
+        if (error.name !== "AbortError") {
+
+            $("outputStatus").textContent =
+                "Could not share. Use Copy Text instead.";
+
+        }
+
+    }
+
 });
 
 
-// 14. Initialize the website
+// 28. UPDATE OUTPUT CONTROLS
+
+output.addEventListener("input", updateControls);
+
+
+// 29. INITIALIZE APPLICATION
 
 renderPages();
+
+updatePreview();
+
+updateControls();
